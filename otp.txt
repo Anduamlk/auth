@@ -1,0 +1,77 @@
+const User = require('../models/Confirm');
+const nodemailer = require('nodemailer');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
+
+const sendOtpEmail = async (email, otp, userId) => {
+  const transporter = nodemailer.createTransport({
+    service: 'gmail', 
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.AUTH_PASSWORD,
+    },
+    secure: false,
+    port: 587,
+    tls:{
+        rejectUnauthorized: false,
+    }
+  });
+
+  const mailOptions = {
+    from: process.env.EMAIL_USER,
+    to: email,
+    subject: 'OTP Verification',
+   text: `Click the link to verify your email: ${process.env.FRONTEND_URL}/otp-confirmation/   Your OTP PassCode:${userId}  Your OTP PassCode: ${otp}`,
+  };
+
+  await transporter.sendMail(mailOptions);
+};
+
+exports.sendOtp = async (req, res) => {
+  const { email, userId } = req.body;
+
+  try {
+    let user = await User.findOne({ email });
+
+    if (!user) {
+      user = new User({ email, userId });
+    }
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    user.otp = otp;
+    user.otpExpires = Date.now() + 10 * 60 * 1000; 
+
+    await user.save();
+    await sendOtpEmail(email, otp, userId);
+
+    res.status(200).json({ message: 'OTP sent successfully' });
+  } catch (err) {
+    res.status(500).json({ message: 'Error sending OTP', error: err.message });
+  }
+};
+
+// Verify OTP
+exports.verifyOtp = async (req, res) => {
+  const { userId, otp } = req.body;
+
+  try {
+    const user = await User.findOne({ userId });
+
+    if (!user || user.otp !== otp) {
+      return res.status(400).json({ message: 'Invalid OTP' });
+    }
+
+    if (user.otpExpires < Date.now()) {
+      return res.status(400).json({ message: 'OTP has expired' });
+    }
+
+    user.isVerified = true;
+    await user.save();
+
+    const token = jwt.sign({ userId: user.userId }, process.env.JWT_SEC, { expiresIn: '1h' });
+
+    res.status(200).json({ message: 'OTP verified successfully', token });
+  } catch (err) {
+    res.status(500).json({ message: 'Error verifying OTP', error: err.message });
+  }
+};
